@@ -836,6 +836,9 @@ pub struct AndroidBackend {
     /// How many of the application's trims it had logged as the user
     /// last left it for the home screen.
     trims_before_home: usize,
+    /// The port here the developer's connect forwarded, as they
+    /// disconnected.
+    disconnected_port: Option<u16>,
 }
 
 impl Drop for AndroidBackend {
@@ -860,6 +863,7 @@ impl Drop for AndroidBackend {
             for dir in self.download_dirs.iter().rev() {
                 let _ = phone.shell(&format!("rmdir {}", quoted(dir)));
             }
+            let _ = self.disconnect(phone);
         }
     }
 }
@@ -1012,6 +1016,13 @@ impl AndroidBackend {
     /// Reaches the inspector of the running application as `ljos android
     /// connect` does, and asks it through `ljos attach`.
     fn connect(&mut self) -> Result<()> {
+        self.reach(false)
+    }
+
+    /// As [`connect`](Self::connect); `anew` when the application was
+    /// just started anew, so starting it once more changes nothing the
+    /// scenario did.
+    fn reach(&mut self, anew: bool) -> Result<()> {
         self.running = None;
         let phone = self.phone()?.clone();
         let dir = self.dir()?;
@@ -1037,6 +1048,13 @@ impl AndroidBackend {
                 && let Some(pid) = phone.pid()?
             {
                 break pid;
+            }
+            // The inspector's port, chosen on the phone, must be the same
+            // here, and here it is another's: another phone's forward, not
+            // this scenario's to remove, or another program's. A new
+            // process listens at another port.
+            if anew && port_taken_here(&String::from_utf8_lossy(&out.stderr)) {
+                phone.start(true)?;
             }
             if Instant::now() > deadline {
                 return Err(BackendError::Failed(format!(
@@ -1068,7 +1086,35 @@ impl AndroidBackend {
     /// The application, started anew, with the scenario's files.
     fn start(&mut self) -> Result<()> {
         self.phone()?.start(true)?;
-        self.connect()
+        self.reach(true)
+    }
+
+    /// Undoes the developer's connect as `ljos android disconnect` does:
+    /// the forward it made goes, unless another phone or application
+    /// holds that port now.
+    fn disconnect(&self, phone: &Phone) -> Result<()> {
+        let Some(dir) = &self.dir else {
+            return Ok(());
+        };
+        let token = dir.path().join("token.json");
+        if !token.exists() {
+            return Ok(());
+        }
+        let out = Command::new(super::testrun::ljos_bin()?)
+            .current_dir(dir.path())
+            .args(["android", "disconnect", "--device", &phone.serial])
+            .arg("--out")
+            .arg(&token)
+            .stdin(Stdio::null())
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "`ljos android disconnect` said: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )))
+        }
     }
 
     /// Waits until what was asked of the application has run.
@@ -1213,6 +1259,17 @@ impl Backend for AndroidBackend {
             return Ok(());
         };
         let left = self.left_as_found(&phone);
+        // Every scenario has a token file of its own, so no later connect
+        // removes this one's forward, and adb keeps it until it restarts:
+        // a port forwarded here for any phone refuses the next scenario's
+        // inspector there (#822).
+        let left = match (left, self.disconnect(&phone)) {
+            (Ok(()), forward) => forward,
+            (Err(BackendError::Failed(why)), Err(e)) => {
+                Err(BackendError::Failed(format!("{why}; {e}")))
+            }
+            (left, _) => left,
+        };
         // Only what the scenario made: the Downloads are the user's.
         for file in self.downloads.drain(..) {
             let _ = phone.shell(&format!("rm -f {}", quoted(&file)));
@@ -2060,6 +2117,34 @@ impl Device for AndroidBackend {
         self.connect()
     }
 
+    fn disconnect_inspector(&mut self) -> Result<()> {
+        self.running = None;
+        let phone = self.phone()?.clone();
+        let token = self.dir()?.join("token.json");
+        let text = std::fs::read_to_string(&token).map_err(|e| {
+            BackendError::Failed(format!("no connect wrote {}: {e}", token.display()))
+        })?;
+        let body = ljos_mcp_core::protocol::TokenFileBody::parse(&text)
+            .map_err(|e| BackendError::Failed(format!("{}: {e}", token.display())))?;
+        self.disconnected_port = Some(url_port(&body.url).ok_or_else(|| {
+            BackendError::Failed(format!("the connect's address {} has no port", body.url))
+        })?);
+        self.disconnect(&phone)
+    }
+
+    fn inspector_forwarded(&mut self) -> Result<bool> {
+        let phone = self.phone()?.clone();
+        let port = self.disconnected_port.ok_or_else(|| {
+            BackendError::Failed("the developer did not disconnect from the inspector".into())
+        })?;
+        let listed = phone.output(
+            phone.adb().args(["forward", "--list"]),
+            "forward --list",
+            None,
+        )?;
+        Ok(forwards_port(&listed, &phone.serial, port))
+    }
+
     fn short_of_memory(&mut self) -> Result<()> {
         let phone = self.phone()?.clone();
         let before = self.trims()?.len();
@@ -2201,14 +2286,37 @@ impl Device for AndroidBackend {
     }
 }
 
+/// Whether `ljos android connect` said the inspector's port here is
+/// already forwarded, so its forward could not be made: its own words
+/// (`connect` in crates/ljos_cli/src/android.rs, whose tests hold them).
+fn port_taken_here(said: &str) -> bool {
+    said.contains("could not be forwarded to the inspector")
+}
+
+/// The port of an `http://host:port/…` address.
+fn url_port(url: &str) -> Option<u16> {
+    let authority = url.strip_prefix("http://")?.split('/').next()?;
+    authority.rsplit_once(':')?.1.parse().ok()
+}
+
+/// Whether `adb forward --list` says `serial` holds a forward from `port`
+/// here.
+fn forwards_port(listed: &str, serial: &str, port: u16) -> bool {
+    let local = format!("tcp:{port}");
+    listed.lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        fields.next() == Some(serial) && fields.next() == Some(local.as_str())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         BackendError, FORGET_EVENTS, Setting, Shown, Watched, abort_query, badge_in,
-        clipboard_call, download_path, front_record, is_dont_keep, kept_permissions, not_idle,
-        not_put_back, percent_decoded, permission_asked, permission_button, picker_shown,
-        picture_size, quoted, restored, scenario_dir, screen_nodes, screens_kept, secrets_answer,
-        secrets_call, seen_until, stays_idle, tear_down, trimmed_bytes,
+        clipboard_call, download_path, forwards_port, front_record, is_dont_keep, kept_permissions,
+        not_idle, not_put_back, percent_decoded, permission_asked, permission_button, picker_shown,
+        picture_size, port_taken_here, quoted, restored, scenario_dir, screen_nodes, screens_kept,
+        secrets_answer, secrets_call, seen_until, stays_idle, tear_down, trimmed_bytes, url_port,
     };
     use serde_json::{Value, json};
     use std::time::Instant;
@@ -2878,5 +2986,29 @@ ACTIVITY MANAGER URI PERMISSIONS (dumpsys activity permissions)
         );
         assert_eq!(percent_decoded("100%"), "100%");
         assert_eq!(percent_decoded("%zz"), "%zz");
+    }
+
+    #[test]
+    fn a_port_another_phone_holds_here_asks_for_a_new_process() {
+        // What `ljos android connect` said in #822's run.
+        let said = "ljos: port 34041 of this computer is emulator-5554's forward to its \
+                    tcp:34041, so it could not be forwarded to the inspector: the inspector \
+                    answers only at its own port, so that port must be free here: adb forward \
+                    --no-rebind tcp:34041 tcp:34041: adb: error: cannot rebind existing socket";
+        assert!(port_taken_here(said));
+        // Not yet serving: the same process serves it a moment later.
+        assert!(!port_taken_here(
+            "ljos: dev.ljos.hello serves no inspector: start it with `ljos android run --mcp=inspect`"
+        ));
+    }
+
+    #[test]
+    fn a_forward_is_told_by_its_phone_and_its_port_here() {
+        let listed = "emulator-5554 tcp:4410 tcp:4410\nemulator-5580 tcp:39001 tcp:39001\n";
+        assert!(forwards_port(listed, "emulator-5580", 39001));
+        assert!(!forwards_port(listed, "emulator-5580", 4410));
+        assert!(!forwards_port(listed, "emulator-558", 39001));
+        assert_eq!(url_port("http://127.0.0.1:39001/mcp"), Some(39001));
+        assert_eq!(url_port("http://127.0.0.1/mcp"), None);
     }
 }

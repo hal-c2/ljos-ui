@@ -130,6 +130,24 @@ fn inspector_over_adb(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.device()?.connect_inspector())
 }
 
+#[when("the developer disconnects from the inspector on the phone")]
+fn disconnect_inspector(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.device()?.disconnect_inspector())
+}
+
+#[then("no port of this computer is forwarded to the inspector on the phone")]
+fn inspector_not_forwarded(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        if b.device()?.inspector_forwarded()? {
+            Err(BackendError::Failed(
+                "the port the connect forwarded is still forwarded to the phone".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
 #[when("the system ends the application's process")]
 fn end_process(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.device()?.end_process())

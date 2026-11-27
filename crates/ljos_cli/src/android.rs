@@ -15,6 +15,7 @@
 //! | `run` | `adb install -r <apk>`, then `adb shell am start -n <id>/dev.ljos.LjosActivity` |
 //! | `run --mcp=<caps>` | the library built with `ljos/mcp`, a debug package, and `am start -S … --es dev.ljos.MCP <caps>`: the activity hands the capabilities to the application as `LJOS_MCP`, with its files directory as `LJOS_MCP_DIR` |
 //! | `connect` | `adb shell run-as <id>` lists and reads the inspector's token file, `adb forward tcp:<port> tcp:<port>` reaches its port at the same port here, the one its Host check takes, and a token file for this computer is written (ARCHITECTURE.md §19.7) |
+//! | `disconnect` | `adb forward --remove tcp:<port>` of the forward `connect` made, while adb lists it as this device's, and its token file removed |
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -142,6 +143,24 @@ pub enum AndroidCommand {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Undo `connect`: remove the forward its token file names, while adb
+    /// still lists it as this device's going to the same port, and the
+    /// token file. A forward another device or application holds stays.
+    Disconnect {
+        /// The application's crate, for its id, as `connect` takes it.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// The application's id, instead of the one its crate gets.
+        #[arg(long)]
+        application_id: Option<String>,
+        /// The device (`adb -s`), when there is more than one.
+        #[arg(long)]
+        device: Option<String>,
+        /// The token file `connect` wrote, by default
+        /// `target/ljos/android-<id>.json` here.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -208,6 +227,26 @@ pub fn run(command: AndroidCommand) -> anyhow::Result<()> {
             let url = connect(&Adb::found(device)?, &id, &out)?;
             outln!("{} at {url}, token in {}", id, out.display());
             Ok(())
+        }
+        AndroidCommand::Disconnect {
+            path,
+            application_id,
+            device,
+            out,
+        } => {
+            let out = match out {
+                Some(out) => out,
+                None => {
+                    let id = match application_id {
+                        Some(id) => id,
+                        None => default_application_id(&package(&path)?.name),
+                    };
+                    PathBuf::from("target")
+                        .join("ljos")
+                        .join(format!("android-{id}.json"))
+                }
+            };
+            disconnect(&Adb::found(device)?, &out)
         }
     }
 }
@@ -350,8 +389,13 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         }
         args.extend([forward.as_str(), forward.as_str()]);
         adb.output(&args).with_context(|| {
+            // One adb keeps every device's forwards: the port may be
+            // another phone's, which is not this connect's to take.
+            let held = holder(adb, &forward)
+                .map(|(serial, there)| format!(" is {serial}'s forward to its {there}, so it"))
+                .unwrap_or_default();
             format!(
-                "port {port} of this computer could not be forwarded to the inspector: \
+                "port {port} of this computer{held} could not be forwarded to the inspector: \
                  the inspector answers only at its own port, so that port must be free here"
             )
         })?;
@@ -384,6 +428,39 @@ fn connect(adb: &Adb, application_id: &str, out: &Path) -> anyhow::Result<String
         let _ = adb.output(&["forward", "--remove", &format!("tcp:{old}")]);
     }
     Ok(url)
+}
+
+/// Removes the forward the connect that wrote `out` made, and `out`.
+fn disconnect(adb: &Adb, out: &Path) -> anyhow::Result<()> {
+    // Only while adb lists it as this device's, going where the connect
+    // made it go, and no other application's connect took it: `--remove`
+    // names the port alone, whoever holds it.
+    if let Some(port) = last_port(out) {
+        let local = format!("tcp:{port}");
+        let ours = device_forwards(adb)
+            .iter()
+            .any(|(here, there)| *here == local && *there == local);
+        if ours && !named_beside(out, port) {
+            adb.output(&["forward", "--remove", &local])?;
+        }
+    }
+    match std::fs::remove_file(out) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(anyhow::Error::new(e).context(format!("removing {}", out.display())))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Which device's forward, and to where on it, holds `local` here, by
+/// what adb lists for every device.
+fn holder(adb: &Adb, local: &str) -> Option<(String, String)> {
+    let listed = adb.output(&["forward", "--list"]).ok()?;
+    listed.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let (serial, here, there) = (fields.next()?, fields.next()?, fields.next()?);
+        (here == local).then(|| (serial.to_owned(), there.to_owned()))
+    })
 }
 
 /// The port here of the forward the last connect to `out` made.
@@ -1410,6 +1487,79 @@ esac
         // The token file still names the forward that works.
         let kept = TokenFileBody::parse(&std::fs::read_to_string(&out).unwrap()).unwrap();
         assert_eq!(kept.url, "http://127.0.0.1:39001/mcp");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_removes_the_forward_its_connect_made_and_the_token_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connect(&adb, "dev.ljos.hello", &out).unwrap();
+        disconnect(&adb, &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(log.contains("-s phone forward --remove tcp:4410"), "{log}");
+        assert!(!out.exists(), "the token file names a forward that is gone");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_leaves_a_forward_another_device_holds_at_the_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connected_before(&out);
+        // adb restarted since, and the port is another device's forward.
+        std::fs::write(dir.path().join("forwards"), "tablet tcp:39001 tcp:39001\n").unwrap();
+        disconnect(&adb, &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+        assert!(!out.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_leaves_a_forward_another_applications_connect_took() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        connected_before(&out);
+        std::fs::write(dir.path().join("forwards"), "phone tcp:39001 tcp:39001\n").unwrap();
+        connected_before(&dir.path().join("target/ljos/android-dev.ljos.other.json"));
+        disconnect(&adb, &out).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_names_the_device_whose_forward_holds_the_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let adb = Adb {
+            program: fake_adb(dir.path(), &on_phone(4321, 4410).to_text(), None),
+            device: Some("phone".into()),
+        };
+        std::fs::write(dir.path().join("forwards"), "tablet tcp:4410 tcp:4410\n").unwrap();
+        std::fs::write(dir.path().join("taken"), "").unwrap();
+        let out = dir.path().join("target/ljos/android-dev.ljos.hello.json");
+        let err = format!("{:#}", connect(&adb, "dev.ljos.hello", &out).unwrap_err());
+        assert!(err.contains("tablet's forward to its tcp:4410"), "{err}");
+        // The same words the scenarios' backend restarts the application on.
+        assert!(
+            err.contains("could not be forwarded to the inspector"),
+            "{err}"
+        );
+        let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+        assert!(!log.contains("--remove"), "{log}");
     }
 
     #[cfg(unix)]
