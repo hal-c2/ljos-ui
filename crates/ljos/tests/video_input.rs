@@ -113,6 +113,30 @@ fn a_frame_sent_after_its_sink_is_gone_is_dropped() {
     assert_eq!(Platform::of(&engine).deliver(&engine), 1);
 }
 
+#[test]
+fn a_closed_input_shows_nothing_more_but_another_input_does() {
+    let engine = ljos::engine();
+    let root = common::create_main(&engine, MAIN);
+    let output = object(&engine, root, "output");
+    let input = VideoFrameInput::new(&engine, output).unwrap();
+    let clone = input.clone();
+    input.send(solid(2, 2, 1)).unwrap();
+    Platform::of(&engine).deliver(&engine);
+    assert_eq!(engine.read_by_name(root, "size").to_js_string(), "2x2");
+
+    // Sent, not yet shown, then closed: the sink keeps what it had.
+    clone.send(solid(3, 1, 2)).unwrap();
+    input.close();
+    clone.send(solid(4, 1, 3)).unwrap();
+    Platform::of(&engine).deliver(&engine);
+    assert_eq!(engine.read_by_name(root, "size").to_js_string(), "2x2");
+
+    let other = VideoFrameInput::new(&engine, output).unwrap();
+    other.send(solid(5, 1, 4)).unwrap();
+    Platform::of(&engine).deliver(&engine);
+    assert_eq!(engine.read_by_name(root, "size").to_js_string(), "5x1");
+}
+
 const TURNED: &str = r#"
 import QtQuick
 import QtMultimedia

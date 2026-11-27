@@ -87,6 +87,47 @@ fn only_a_camera_can_be_tapped() {
     assert!(tap_camera(&engine, root, |_| {}).is_err());
 }
 
+#[test]
+fn a_tap_that_owns_another_tap_drops_it_with_itself() {
+    let engine = ljos::engine();
+    let cameras = FakeCameras::default();
+    cameras.add("Desk camera");
+    set_cameras(&engine, std::rc::Rc::new(cameras.clone()));
+    let root = common::create_main(&engine, MAIN);
+    let camera = engine.read_by_name(root, "camera").as_object().unwrap();
+    let inner_seen = Arc::new(Mutex::new(0));
+    let log = Arc::clone(&inner_seen);
+    let inner = tap_camera(&engine, camera, move |_| *log.lock().unwrap() += 1).unwrap();
+    let outer = tap_camera(&engine, camera, move |_| {
+        let _ = &inner;
+    })
+    .unwrap();
+    // Dropping the outer drops the inner, whose drop takes the taps' lock.
+    drop(outer);
+    engine.invoke_by_name(camera, "start", &[]).unwrap();
+    cameras.capture("Desk camera", &grey(2, 2));
+    assert_eq!(*inner_seen.lock().unwrap(), 0);
+}
+
+#[test]
+fn a_disconnected_camera_captures_nothing_before_the_engine_hears_of_it() {
+    let engine = ljos::engine();
+    let cameras = FakeCameras::default();
+    cameras.add("Desk camera");
+    set_cameras(&engine, std::rc::Rc::new(cameras.clone()));
+    let root = common::create_main(&engine, MAIN);
+    let camera = engine.read_by_name(root, "camera").as_object().unwrap();
+    let seen = Arc::new(Mutex::new(0));
+    let log = Arc::clone(&seen);
+    let _tap = tap_camera(&engine, camera, move |_| *log.lock().unwrap() += 1).unwrap();
+    engine.invoke_by_name(camera, "start", &[]).unwrap();
+    assert!(cameras.disconnect("Desk camera"));
+    assert!(!cameras.capture("Desk camera", &grey(2, 2)));
+    assert_eq!(*seen.lock().unwrap(), 0);
+    assert_eq!(cameras.capturing(), 0);
+    Platform::of(&engine).deliver(&engine);
+}
+
 const TWO_SESSIONS: &str = r#"
 import QtQuick
 import QtMultimedia
