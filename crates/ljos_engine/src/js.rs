@@ -2210,12 +2210,16 @@ impl Engine {
             if let Some(o) = engine.singleton_by_name(module, name) {
                 return Ok(engine.to_js(&Value::Object(o)));
             }
+            // A script that names a module of Ljós's own has chosen its
+            // API, and with it the homes of what was Qt's (`UI.Locale.named`);
+            // `.import QtQuick as QQ` has Qt's faces.
+            let ljos = module.starts_with("Ljos.");
             // `QtQuick` sees `QtQml`.
             Ok(engine
                 .lookup_type(module, name)
                 .or_else(|| engine.lookup_type("QtQml", name))
                 .map_or(JsValue::Undefined, |m| {
-                    engine.type_face(scope, &m, None, false)
+                    engine.type_face(scope, &m, None, ljos)
                 }))
         });
         // `value instanceof Type`, asked by what stands for the type
