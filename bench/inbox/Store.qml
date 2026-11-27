@@ -38,6 +38,9 @@ Object {
     // thousand records in it has the list to make and no time to spare.
     property list<string> tags: []
     property list<string> people: []
+    // Whether the records are in. A record made before would be replaced
+    // by the loaded ones and have an id one of them has.
+    property bool ready: false
 
     onDarkChanged: Colors.dark = store.dark
     Component.onCompleted: Colors.dark = store.dark
@@ -74,6 +77,7 @@ Object {
 
     function loaded(rows: readonly Inbox.Issue[]): void {
         store.all = rows
+        store.ready = true
         later(() => {
             store.tags = Inbox.tagsOf(rows)
         })
@@ -88,16 +92,15 @@ Object {
         store.tab = 0
     }
 
+    // A record the change takes out of the list shown (closed in the
+    // inbox, reopened in Closed) gives the selection to its neighbour.
     function toggleStatus(): void {
         const id = store.selectedId
-        if (store.selected.status === "open") {
-            const next = Inbox.after(store.rows, id)
-            store.all = Inbox.withStatus(store.all, id, "closed")
-            if (Inbox.indexOf(store.rows, id) < 0) {
-                store.selectedId = next
-            }
-        } else {
-            store.all = Inbox.withStatus(store.all, id, "open")
+        const next = Inbox.after(store.rows, id)
+        const status = store.selected.status === "open" ? "closed" : "open"
+        store.all = Inbox.withStatus(store.all, id, status)
+        if (Inbox.indexOf(store.rows, id) < 0) {
+            store.selectedId = next
         }
     }
 
@@ -134,6 +137,9 @@ Object {
     }
 
     function create(): void {
+        if (!store.ready) {
+            return
+        }
         const id = Inbox.nextId(store.all)
         store.all = Inbox.created(store.all, t`Untitled issue`)
         store.selectedId = id

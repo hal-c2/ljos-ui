@@ -16,13 +16,19 @@ Item {
     readonly property Inbox.BodyError bodyError: Inbox.bodyError(body.text)
     readonly property bool valid: form.titleError === "" && form.tagsError === "" && form.bodyError === ""
 
+    // The choices are kept as what they name, and the boxes' indices bound
+    // to them: a model made again (the people arriving a turn after the
+    // records, the language changing the names) shows the same choice.
+    property int priorityChoice: 2
+    property string assigneeChoice: ""
+
     function reset(): void {
         const issue = form.inbox.selected
         title.text = issue.title
         tags.text = issue.tags.join(" ")
         body.text = issue.body
-        priority.currentIndex = issue.priority
-        assignee.currentIndex = issue.assignee === "" ? 0 : form.inbox.people.indexOf(issue.assignee) + 1
+        form.priorityChoice = issue.priority
+        form.assigneeChoice = issue.assignee
     }
 
     onOpenChanged: {
@@ -170,6 +176,10 @@ Item {
         height: 28
         Accessible.name: t`Priority`
         model: form.inbox.priorityNames()
+        currentIndex: form.priorityChoice
+        onActivated: (index: number) => {
+            form.priorityChoice = index
+        }
     }
 
     ComboBox {
@@ -180,6 +190,11 @@ Item {
         height: 28
         Accessible.name: t`Assignee`
         model: form.inbox.assignees()
+        // Nobody until the people are gathered, then the one chosen.
+        currentIndex: form.assigneeChoice === "" ? 0 : form.inbox.people.indexOf(form.assigneeChoice) + 1
+        onActivated: (index: number) => {
+            form.assigneeChoice = index === 0 ? "" : form.inbox.people[index - 1] ?? ""
+        }
     }
 
     Button {
@@ -204,7 +219,6 @@ Item {
         primary: true
         enabled: form.valid
         text: t`Save`
-        onClicked: form.inbox.save(title.text, tags.text, priority.currentIndex,
-            assignee.currentIndex === 0 ? "" : form.inbox.people[assignee.currentIndex - 1] ?? "", body.text)
+        onClicked: form.inbox.save(title.text, tags.text, form.priorityChoice, form.assigneeChoice, body.text)
     }
 }

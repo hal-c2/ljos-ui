@@ -67,6 +67,12 @@ Feature: The inbox bench application
       When the method "selectAt" of "store" is called with 0
       Then the property "selectedId" of "store" is 4
 
+    Scenario: A sidebar row is chosen from the keyboard
+      When an assistive technology focuses the "button" named "Starred"
+      And the user presses "Return"
+      Then the property "filter" of "store" is "starred"
+      And the property "rows.length" of "store" is 1
+
   Rule: The keyboard moves the selection, and the selection follows the report
 
     Background:
@@ -78,7 +84,10 @@ Feature: The inbox bench application
     Scenario: Page Down moves the selection ten rows
       When the user presses "PageDown"
       Then the property "selectedIndex" of "store" is 10
-      When the user presses "PageUp"
+
+    Scenario: Page Up after Page Down comes back to the first row
+      When the user presses "PageDown"
+      And the user presses "PageUp"
       Then the property "selectedIndex" of "store" is 0
 
     Scenario: Another sort keeps the same report selected where it now stands
@@ -101,7 +110,12 @@ Feature: The inbox bench application
       And the user presses "Backspace"
       Then the property "enabled" of "save" is false
       And the accessibility tree has a "label" named "Title is required"
-      When the user types "Contrast"
+
+    Scenario: A title typed into the emptied field turns Save on again
+      When the user touches 990, 160
+      And the user presses "Ctrl+A"
+      And the user presses "Backspace"
+      And the user types "Contrast"
       Then the property "enabled" of "save" is true
 
     Scenario: Saving shows the report again, at the top of the list
@@ -121,6 +135,15 @@ Feature: The inbox bench application
       And the user touches 1196, 132
       Then the property "rows.length" of "store" is 10
       And the property "selectedId" of "store" is 2
+
+    Scenario: Reopening a report in Closed takes it out of that list and its selection
+      When the user clicks the "button" "Closed"
+      And the user touches 460, 120
+      And 300 milliseconds pass
+      And the user touches 1196, 132
+      Then the property "rows.length" of "store" is 0
+      And the property "selectedId" of "store" is -1
+      And the property "all.length" of "store" is 12
 
     Scenario: A new report is selected at the top, its form open
       When the user touches 888, 28
