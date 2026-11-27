@@ -327,16 +327,182 @@ const KEYMAP: &str = "xkb_keymap {
 /// The evdev key that types `c` on a US layout without a modifier.
 #[must_use]
 pub fn key_of(c: char) -> Option<u32> {
-    const ROWS: [(&str, u32); 3] = [("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)];
-    match c {
-        ' ' => Some(57),
-        '\u{8}' => Some(14),
-        _ => ROWS.iter().find_map(|(row, first)| {
-            row.find(c)
-                .and_then(|i| u32::try_from(i).ok())
-                .map(|i| first + i)
-        }),
+    typed(c)
+        .filter(|chord| chord.modifiers == Modifiers::NONE)
+        .map(|chord| chord.key)
+}
+
+/// The modifiers held while a key is pressed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+}
+
+impl Modifiers {
+    pub const NONE: Self = Self {
+        ctrl: false,
+        shift: false,
+        alt: false,
+    };
+    pub const SHIFT: Self = Self {
+        ctrl: false,
+        shift: true,
+        alt: false,
+    };
+
+    /// The keys that hold them down (evdev's left ones), in the order a
+    /// hand presses them.
+    fn keys(self) -> impl DoubleEndedIterator<Item = u32> {
+        [(self.ctrl, 29), (self.shift, 42), (self.alt, 56)]
+            .into_iter()
+            .filter_map(|(held, key)| held.then_some(key))
     }
+
+    /// The mask of them [`KEYMAP`] has: its types and compat are XKB's
+    /// complete ones, whose real modifiers are Shift (bit 0), Lock,
+    /// Control (bit 2) and Mod1 (bit 3), which Alt sets.
+    fn mask(self) -> u32 {
+        u32::from(self.shift) | u32::from(self.ctrl) << 2 | u32::from(self.alt) << 3
+    }
+}
+
+/// A key pressed with modifiers held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chord {
+    /// Its evdev number.
+    pub key: u32,
+    pub modifiers: Modifiers,
+}
+
+/// The key, and whether Shift is held, that types `c` on a US layout:
+/// letters, digits, the punctuation of its keys, space, tab and newline.
+#[must_use]
+pub fn typed(c: char) -> Option<Chord> {
+    const ROWS: [(&str, &str, u32); 4] = [
+        ("1234567890-=", "!@#$%^&*()_+", 2),
+        ("qwertyuiop[]", "QWERTYUIOP{}", 16),
+        ("asdfghjkl;'`", "ASDFGHJKL:\"~", 30),
+        ("zxcvbnm,./", "ZXCVBNM<>?", 44),
+    ];
+    let plain = |key| Chord {
+        key,
+        modifiers: Modifiers::NONE,
+    };
+    match c {
+        ' ' => return Some(plain(57)),
+        '\n' => return Some(plain(28)),
+        '\t' => return Some(plain(15)),
+        '\u{8}' => return Some(plain(14)),
+        '\\' => return Some(plain(43)),
+        '|' => {
+            return Some(Chord {
+                key: 43,
+                modifiers: Modifiers::SHIFT,
+            });
+        }
+        _ => {}
+    }
+    ROWS.iter().find_map(|(lower, upper, first)| {
+        let at = |row: &str| {
+            row.chars()
+                .position(|x| x == c)
+                .and_then(|i| u32::try_from(i).ok())
+        };
+        at(lower).map(|i| plain(first + i)).or_else(|| {
+            at(upper).map(|i| Chord {
+                key: first + i,
+                modifiers: Modifiers::SHIFT,
+            })
+        })
+    })
+}
+
+/// The keys [`named`] knows besides the characters, by the names XKB
+/// gives them (and a few others people use), and their evdev numbers.
+const NAMED: [(&str, u32); 24] = [
+    ("return", 28),
+    ("enter", 28),
+    ("escape", 1),
+    ("esc", 1),
+    ("tab", 15),
+    ("backspace", 14),
+    ("delete", 111),
+    ("insert", 110),
+    ("up", 103),
+    ("down", 108),
+    ("left", 105),
+    ("right", 106),
+    ("home", 102),
+    ("end", 107),
+    ("pageup", 104),
+    ("page_up", 104),
+    ("prior", 104),
+    ("pagedown", 109),
+    ("page_down", 109),
+    ("next", 109),
+    ("space", 57),
+    ("f10", 68),
+    ("f11", 87),
+    ("f12", 88),
+];
+
+/// The key a name says, with any of `Ctrl+`, `Shift+` and `Alt+` before
+/// it: a letter (`A` is the key, not a capital, so `Ctrl+A` is Control
+/// and the A key), a digit or another character of the layout,
+/// `Return`, `Escape`, `Tab`, `BackSpace`, `Delete`, `Insert`, the
+/// arrows `Up`, `Down`, `Left` and `Right`, `Home`, `End`, `PageUp`,
+/// `PageDown`, `space` or `F1` to `F12`, in any case. `None` for a name
+/// it does not know.
+#[must_use]
+pub fn named(name: &str) -> Option<Chord> {
+    // `Ctrl++` is Control and the plus key.
+    let (prefix, key) = match name.strip_suffix("++") {
+        Some(prefix) => (Some(prefix), "+"),
+        None => match name.rsplit_once('+') {
+            Some((prefix, key)) => (Some(prefix), key),
+            None => (None, name),
+        },
+    };
+    let mut modifiers = Modifiers::NONE;
+    for m in prefix.into_iter().flat_map(|p| p.split('+')) {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => modifiers.ctrl = true,
+            "shift" => modifiers.shift = true,
+            "alt" => modifiers.alt = true,
+            _ => return None,
+        }
+    }
+    let mut chars = key.chars();
+    let chord = match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => typed(c.to_ascii_lowercase())?,
+        (Some(c), None) => typed(c)?,
+        _ => {
+            let lower = key.to_ascii_lowercase();
+            let code = NAMED
+                .iter()
+                .find(|(n, _)| *n == lower)
+                .map(|(_, code)| *code)
+                .or_else(|| {
+                    // F1 to F9 follow one another from 59.
+                    let n: u32 = lower.strip_prefix('f')?.parse().ok()?;
+                    (1..=9).contains(&n).then(|| 58 + n)
+                })?;
+            Chord {
+                key: code,
+                modifiers: Modifiers::NONE,
+            }
+        }
+    };
+    Some(Chord {
+        key: chord.key,
+        modifiers: Modifiers {
+            ctrl: modifiers.ctrl || chord.modifiers.ctrl,
+            shift: modifiers.shift || chord.modifiers.shift,
+            alt: modifiers.alt || chord.modifiers.alt,
+        },
+    })
 }
 
 /// A keyboard the compositor treats as one plugged into its seat: what it
@@ -405,12 +571,43 @@ impl Keyboard {
     /// # Errors
     /// The compositor went away.
     pub fn tap(&mut self, key: u32, hold: Duration) -> Result<(), Error> {
+        self.press(
+            Chord {
+                key,
+                modifiers: Modifiers::NONE,
+            },
+            hold,
+        )
+    }
+
+    /// Presses and lets go `chord`'s key, held for `hold`, with its
+    /// modifiers held around it as a hand would: their keys pressed first
+    /// and let go last. The compositor passes a virtual keyboard's
+    /// modifiers on as it is told them, not from its keys, so they are
+    /// told too.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn press(&mut self, chord: Chord, hold: Duration) -> Result<(), Error> {
+        let mods = chord.modifiers;
         // 1 and 0 are wl_keyboard's pressed and released.
-        self.keyboard.key(self.time(), key, 1);
+        for key in mods.keys() {
+            self.keyboard.key(self.time(), key, 1);
+        }
+        if mods != Modifiers::NONE {
+            self.keyboard.modifiers(mods.mask(), 0, 0, 0);
+        }
+        self.keyboard.key(self.time(), chord.key, 1);
         self.queue.flush().map_err(protocol)?;
         self.sent.push(monotonic_ns());
         thread::sleep(hold);
-        self.keyboard.key(self.time(), key, 0);
+        self.keyboard.key(self.time(), chord.key, 0);
+        for key in mods.keys().rev() {
+            self.keyboard.key(self.time(), key, 0);
+        }
+        if mods != Modifiers::NONE {
+            self.keyboard.modifiers(0, 0, 0, 0);
+        }
         self.queue.flush().map_err(protocol)?;
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
@@ -795,4 +992,60 @@ fn shm_buffer(
     );
     pool.destroy();
     Ok((buffer, file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chord(key: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Chord> {
+        Some(Chord {
+            key,
+            modifiers: Modifiers { ctrl, shift, alt },
+        })
+    }
+
+    #[test]
+    fn a_character_is_typed_with_shift_where_the_layout_has_it_shifted() {
+        assert_eq!(typed('q'), chord(16, false, false, false));
+        assert_eq!(typed('R'), chord(19, false, true, false));
+        assert_eq!(typed('1'), chord(2, false, false, false));
+        assert_eq!(typed('0'), chord(11, false, false, false));
+        assert_eq!(typed('.'), chord(52, false, false, false));
+        assert_eq!(typed('?'), chord(53, false, true, false));
+        assert_eq!(typed('"'), chord(40, false, true, false));
+        assert_eq!(typed('\\'), chord(43, false, false, false));
+        assert_eq!(typed('|'), chord(43, false, true, false));
+        assert_eq!(typed('ü'), None);
+        assert_eq!(key_of(' '), Some(57));
+        assert_eq!(key_of('Q'), None);
+    }
+
+    #[test]
+    fn a_named_key_carries_the_modifiers_before_it() {
+        assert_eq!(named("PageDown"), chord(109, false, false, false));
+        assert_eq!(named("BackSpace"), chord(14, false, false, false));
+        assert_eq!(named("Return"), chord(28, false, false, false));
+        assert_eq!(named("Ctrl+A"), chord(30, true, false, false));
+        assert_eq!(named("ctrl+shift+End"), chord(107, true, true, false));
+        assert_eq!(named("Alt+F4"), chord(62, false, false, true));
+        assert_eq!(named("F12"), chord(88, false, false, false));
+        assert_eq!(named("Ctrl++"), chord(13, true, true, false));
+        assert_eq!(named("space"), chord(57, false, false, false));
+        assert_eq!(named("Hyper+Q"), None);
+        assert_eq!(named("F13"), None);
+        assert_eq!(named("Nothing"), None);
+    }
+
+    #[test]
+    fn modifiers_are_the_keymaps_real_modifiers() {
+        let all = Modifiers {
+            ctrl: true,
+            shift: true,
+            alt: true,
+        };
+        assert_eq!(all.mask(), 0b1101);
+        assert_eq!(all.keys().collect::<Vec<_>>(), [29, 42, 56]);
+        assert_eq!(Modifiers::NONE.mask(), 0);
+    }
 }
