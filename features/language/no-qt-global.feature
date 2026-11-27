@@ -228,6 +228,33 @@ Feature: No Qt global in a file of Ljós's API
       And the property "families" of "root" is "undefined"
       And the property "qtLocale" of "root" is "function"
 
+  Rule: A script that imports Ljos.Ui under a name has the homes
+
+    @ljos-only
+    Scenario: Locale and Font reached through a script's import of Ljos.Ui have their homes
+      Given the file "homes.js":
+        """
+        .pragma library
+        .import Ljos.Ui as UI
+        function named() { return typeof UI.Locale.named }
+        function of() { return typeof UI.Font.of }
+        function families() { return typeof UI.Font.families }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "homes.js" as Homes
+        Item {
+          objectName: "root"
+          property string named: Homes.named()
+          property string of: Homes.of()
+          property string families: Homes.families()
+        }
+        """
+      Then the property "named" of "root" is "function"
+      And the property "of" of "root" is "function"
+      And the property "families" of "root" is "function"
+
   Rule: ljos migrate writes each member where it now is
 
     @api-QtQml.Qt.GlobalColor @api-QtQml.Qt.application @api-QtQml.Qt.quit
