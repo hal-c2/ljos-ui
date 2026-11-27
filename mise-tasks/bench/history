@@ -27,7 +27,8 @@ set -euo pipefail
 root="$ljos_root"
 dir="${BENCH_HISTORY_DIR:-$(checkout_dir bench-history)}"
 # Absolute: the builds `cd` into the clone, and the manifests name files.
-dir="$(realpath -m -- "$dir")"
+mkdir -p -- "$dir"
+dir="$(physical "$dir")"
 step="${1:-}"
 [ $# -gt 0 ] && shift
 revs=()
