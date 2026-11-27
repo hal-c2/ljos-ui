@@ -34,8 +34,17 @@ history_now() {
   printf '%s\n' "$ljos"
 }
 
+# The inbox reads 10 000 generated records; they are made once, before
+# anything runs it.
+history_fixture() {
+  need_python3
+  python3 "$root/bench/inbox/fixture/generate.py" --check "$root/bench/inbox/data" >/dev/null 2>&1 ||
+    python3 "$root/bench/inbox/fixture/generate.py" "$root/bench/inbox/data"
+}
+
 history_reload_only() {
   local ljos listed commits
+  history_fixture
   ljos="$(history_now)" || exit 1
   listed="$(history_revisions)" || exit 1
   mapfile -t commits <<< "$listed"
@@ -53,9 +62,7 @@ history_measure() {
   mapfile -t commits <<< "$listed"
   [ ${#commits[@]} -gt 0 ] || die "bench:history: no revision to measure"
 
-  # The inbox reads 10 000 generated records; they are made once.
-  python3 "$root/bench/inbox/fixture/generate.py" --check "$root/bench/inbox/data" >/dev/null 2>&1 ||
-    python3 "$root/bench/inbox/fixture/generate.py" "$root/bench/inbox/data"
+  history_fixture
 
   # Oldest first, so a column's left neighbour is the commit before it.
   runtimes="$(HISTORY_DIR="$dir" python3 - "$root" "$dir" "${BENCH_HISTORY_APPS:-minimal feed list1000}" "${commits[@]}" <<'PY'
@@ -143,6 +150,9 @@ import json, os, re, shutil, signal, subprocess, sys, time
 from datetime import datetime
 root, out, now, edits, rounds, *commits = sys.argv[1:]
 edits, rounds = int(edits), int(rounds)
+# A stop (mise passes SIGTERM on) unwinds like an interrupt, so the
+# application being measured is stopped with it.
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 env = dict(os.environ)
 for line in os.environ["SANDBOX_ENV"].splitlines():
     k, _, v = line.partition("=")
@@ -190,15 +200,24 @@ for app, parts, main, size, edited, label in apps:
             with open(log, "w") as f:
                 p = subprocess.Popen([program, "run", "--watch", os.path.join(copy, main), "--size", size],
                                      env=env, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
-            # The inbox reads its records in the turns after the first
-            # frame; the saves start once they are in.
-            time.sleep(5)
-            for i in range(edits):
-                if p.poll() is not None:
-                    break
-                open(bar, "w").write(original if i % 2 else original.replace(label, changed, 1))
-                results[name]["saves"] += 1
-                time.sleep(1.5)
+            try:
+                # The inbox reads its records in the turns after the first
+                # frame; the saves start once they are in.
+                time.sleep(5)
+                for i in range(edits):
+                    if p.poll() is not None:
+                        break
+                    open(bar, "w").write(original if i % 2 else original.replace(label, changed, 1))
+                    results[name]["saves"] += 1
+                    time.sleep(1.5)
+            except BaseException:
+                # The application has a session of its own, so the
+                # interrupt never reached it: it is stopped here, or it
+                # runs on beside every later measurement.
+                if p.poll() is None:
+                    os.killpg(p.pid, signal.SIGKILL)
+                    p.wait()
+                raise
             if p.poll() is None:
                 os.killpg(p.pid, signal.SIGTERM)
                 try:
@@ -244,7 +263,10 @@ for r in ("apps", "inbox"):
         said = open(status).read().strip() if os.path.exists(status) else "complete"
         if said != "complete":
             partial.append(f"{r}: {said}")
-if not runs:
+# Hot reload has a report of its own, which `reload` writes alone.
+reload = os.path.join(out, "report", "reload", "reload.json")
+reloads = json.load(open(reload)) if os.path.exists(reload) else None
+if not runs and not (reloads and reloads.get("apps")):
     sys.exit(f"bench:history table: no report in {out}/report; run bench:history measure first")
 
 # Each revision's runtime is at-<the first 9 of its commit>; its commit
@@ -322,10 +344,11 @@ for app in sorted({r["app"] for r in runs}):
         if seen:
             lines.append(f"| {label} | " + " | ".join(cells) + " |")
     lines.append("")
-reload = os.path.join(out, "report", "reload", "reload.json")
-if os.path.exists(reload):
-    for app, got in json.load(open(reload))["apps"].items():
-        cols = [rt for rt in order if rt in got]
+if reloads:
+    for app, got in reloads["apps"].items():
+        # Its own order: a revision measured only for reload has a column
+        # here too, oldest first and this checkout last.
+        cols = [rt for rt in reloads.get("order") or order if rt in got]
         lines += [f"## {app}, hot reload", "",
                   "One label saved again and again under `ljos run --watch`; the times are the run's own log.", "",
                   "| metric | " + " | ".join(cols) + " |", "|---" * (len(cols) + 1) + "|"]

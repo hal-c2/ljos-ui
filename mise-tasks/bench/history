@@ -70,13 +70,17 @@ build() {
   local src rev commit into sub
   [ ${#revs[@]} -gt 0 ] || die "bench:history build: name the revisions to build"
   # One build at a time in a history directory: two would check different
-  # commits out in the one clone.
-  mkdir -p "$dir"
-  exec {lock}> "$dir/build.lock"
-  flock -n "$lock" || {
-    echo "bench:history: another build in $dir; waiting for it"
-    flock "$lock"
-  }
+  # commits out in the one clone. flock is util-linux's, which macOS does
+  # not ship; there the builds go unlocked and the person is told.
+  if command -v flock >/dev/null; then
+    exec {lock}> "$dir/build.lock"
+    flock -n "$lock" || {
+      echo "bench:history: another build in $dir; waiting for it"
+      flock "$lock"
+    }
+  else
+    echo "bench:history: no flock (util-linux) here, so builds in $dir are not locked: run one at a time" >&2
+  fi
   src="$(clone)"
   for rev in "${revs[@]}"; do
     commit="$(commit_of "$rev")"
