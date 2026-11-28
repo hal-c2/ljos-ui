@@ -39,7 +39,7 @@ use ljos_host::{
 use ljos_quick::roots::RootSwaps;
 use ljos_runtime::{MemoryPressure, SystemClock};
 
-use self::input::{asks_paste, follow_modifiers, starts_input};
+use self::input::{asks_paste, follow_modifiers, shows_an_act, starts_input};
 #[cfg(feature = "mcp")]
 use self::inspect::{Meter, is_an_act};
 use self::slot::Slot;
@@ -1304,7 +1304,8 @@ impl<M: Send + 'static> Desktop<M> {
         // What was asked until now, this pass answers. egui forgets a
         // delayed repaint with every pass too, and is asked again.
         repaints.forget(slot.key);
-        if paint {
+        let ahead = std::mem::take(&mut slot.drawing_ahead);
+        if paint && !ahead {
             // A redraw the shell did not ask for is the platform's: what
             // the window showed may be gone (exposed, resized).
             if slot.redraw_asked.is_none() {
@@ -1312,6 +1313,9 @@ impl<M: Send + 'static> Desktop<M> {
             }
             slot.redraw_asked = None;
             slot.stalled = false;
+        } else if paint {
+            // The platform was not asked for this one: what it was asked
+            // for before still comes, at the display's frame.
         } else {
             slot.undrawn_pass_at = Some(Instant::now());
         }
@@ -1645,7 +1649,11 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         if let Shown::Nothing { .. } = shown {
-            slot.not_drawn(now, wake);
+            if ahead {
+                slot.drawn_ahead(now, false);
+            } else {
+                slot.not_drawn(now, wake);
+            }
             #[cfg(feature = "mcp")]
             if let Some(w) = self.wake.as_mut() {
                 w.unchanged += 1;
@@ -1660,7 +1668,11 @@ impl<M: Send + 'static> Desktop<M> {
         }
         show_when_drawn(host, surface, &mut slot.activate, screens_stale);
         slot.swapped = swapped;
-        slot.drawn(began, Instant::now());
+        if ahead {
+            slot.drawn_ahead(Instant::now(), true);
+        } else {
+            slot.drawn(began, Instant::now());
+        }
         #[cfg(feature = "mcp")]
         if let Some(w) = self.wake.as_mut() {
             w.drawn += 1;
@@ -1756,6 +1768,7 @@ impl<M: Send + 'static> Desktop<M> {
             // next wish, which may be a long way off (a press waits for
             // its press-and-hold). What the platform said is heard now.
             slot.held = None;
+            slot.heard |= shows_an_act(event);
             self.repaints.request(slot.key, Instant::now());
         }
         match *event {
@@ -1867,7 +1880,11 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
             return;
         };
-        if at_once {
+        if at_once && slot.is_root() && self.app.take_edited() {
+            // A save of the application's QML, which the pass applies: the
+            // developer's act, shown as a key is.
+            slot.heard_act();
+        } else if at_once {
             slot.asked_at_once();
         }
         #[cfg(feature = "mcp")]
@@ -2030,6 +2047,16 @@ impl<M: Send + 'static> Desktop<M> {
             let slot = &mut self.slots[i];
             let held = slot.held.filter(|t| *t > now);
             match (slot.surface.as_ref(), held) {
+                // What the user did is shown at the display's next frame,
+                // not at the one after (`Slot::draws_ahead`).
+                (Some(_), _) if slot.draws_ahead() => {
+                    if early {
+                        self.repaints.request(key, now);
+                    } else {
+                        slot.drawing_ahead = true;
+                        draw.push(i);
+                    }
+                }
                 // The display would have held a drawn frame this long.
                 (Some(_), Some(until)) if !slot.out_of_sight() => self.repaints.request(key, until),
                 (Some(_), _) if early && !slot.out_of_sight() && slot.redraw_granted => {
@@ -2935,6 +2962,67 @@ mod tests {
         // A scene that asks for nothing still waits a frame.
         slot.not_drawn(t + ms(9), None);
         assert_eq!(slot.held, Some(t + ms(29)));
+    }
+
+    // An animation at 50 Hz drew its frame at t; a key is pressed 5 ms
+    // later, while the platform holds the next frame until the display
+    // has taken that one (#833).
+    #[test]
+    fn an_act_between_frames_is_drawn_ahead_once_and_keeps_the_beat() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t);
+        assert!(!slot.waits_with_an_act(), "nothing was done");
+        slot.heard_act();
+        assert_eq!(slot.held, None, "what the user did is not paced");
+        assert!(slot.waits_with_an_act());
+        slot.drawn_ahead(t + ms(6), true);
+        assert_eq!(slot.beat, Some(t + ms(20)), "the animation keeps its beat");
+        assert_eq!(slot.held, Some(t + ms(20)), "and its frame waits for it");
+        // A second key in the same frame waits for the frame.
+        slot.heard_act();
+        assert!(!slot.waits_with_an_act());
+        slot.drawn(t + ms(20), t + ms(21));
+        assert_eq!(slot.beat, Some(t + ms(40)));
+        assert!(!slot.waits_with_an_act(), "the frame drew it");
+        slot.heard_act();
+        assert!(
+            slot.waits_with_an_act(),
+            "the next frame has its turn ahead"
+        );
+    }
+
+    // A key that changes nothing the window shows (a modifier alone).
+    #[test]
+    fn an_act_that_draws_nothing_ahead_leaves_the_next_its_turn() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t);
+        slot.heard_act();
+        slot.drawn_ahead(t + ms(3), false);
+        assert_eq!(
+            slot.held,
+            Some(t + ms(20)),
+            "the frame still waits for the beat"
+        );
+        assert!(!slot.waits_with_an_act());
+        slot.heard_act();
+        assert!(slot.waits_with_an_act());
+    }
+
+    // The platform let the window draw: the frame is drawn at once anyway.
+    #[test]
+    fn an_act_when_the_window_may_draw_is_not_drawn_ahead() {
+        let t = Instant::now();
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.drawn(t, t);
+        slot.redraw_granted = true;
+        slot.heard_act();
+        assert!(!slot.waits_with_an_act());
     }
 
     // A long Timer is pending and the pass drew nothing: a picture

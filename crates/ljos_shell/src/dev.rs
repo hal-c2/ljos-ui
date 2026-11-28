@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ljos_dev::{Aliases, DevSession, Host, Overlay, QtTypeOracle, Reloader, Report, TypeOracle};
 use ljos_egui::QmlView;
@@ -26,6 +27,8 @@ type ReportHandler = Box<dyn FnMut(&Report)>;
 /// and what [`Setup::watch`] made.
 pub(crate) struct DevSetup {
     wake: WakeHook,
+    /// Set by the watcher's wake, before it wakes the window.
+    edited: Arc<AtomicBool>,
     /// The application's import path, as [`Setup::set_qml_dirs`] gave it.
     qml_dirs: Vec<PathBuf>,
     /// The modules imported from a directory of the caller's choosing.
@@ -38,8 +41,17 @@ pub(crate) struct DevSetup {
 
 impl DevSetup {
     pub(crate) fn new(wake: WakeHook) -> Self {
+        let edited = Arc::new(AtomicBool::new(false));
+        let wake: WakeHook = {
+            let edited = Arc::clone(&edited);
+            Arc::new(move || {
+                edited.store(true, Ordering::Release);
+                wake();
+            })
+        };
         Self {
             wake,
+            edited,
             qml_dirs: Vec::new(),
             aliases: Aliases::new(),
             theme: None,
@@ -66,6 +78,9 @@ pub(crate) struct Dev {
     /// Reloads applied in this pass, told once the frame that shows them
     /// is painted, with the time from the save to it.
     unshown: Vec<Report>,
+    /// The watcher woke the window since [`ShellApp::take_edited`] last
+    /// looked.
+    edited: Arc<AtomicBool>,
 }
 
 impl Dev {
@@ -277,6 +292,7 @@ impl<M> Setup<'_, M> {
             placeholder,
             on_report: None,
             unshown: Vec::new(),
+            edited: Arc::clone(&self.dev.edited),
         });
         Ok(root)
     }
@@ -366,6 +382,15 @@ impl<M> ShellApp<M> {
         Overlay::current(self.view.engine(), dev.session.more_errors())
     }
 
+    /// Whether the watcher woke the window since this last looked: what
+    /// it brings is the developer's, which the window shows as soon as it
+    /// can (a save, a reload an agent asked for).
+    pub(crate) fn take_edited(&self) -> bool {
+        self.dev
+            .as_ref()
+            .is_some_and(|dev| dev.edited.swap(false, Ordering::AcqRel))
+    }
+
     /// Pipeline step 1, after the inbox: applies what the watcher brought.
     /// The view's waker is held, as for the inbox: the pass that follows
     /// shows the result.
@@ -379,6 +404,7 @@ impl<M> ShellApp<M> {
             placeholder,
             on_report,
             unshown,
+            ..
         } = dev;
         let reports = view.without_wake(|view| {
             let engine = Rc::clone(view.engine());

@@ -101,6 +101,14 @@ pub(super) struct Slot {
     /// When the last drawn pass held the next until: the display's
     /// rhythm, which the next keeps if it began on time.
     pub(super) beat: Option<Instant>,
+    /// The user did something the window shows (a key, a click, a save
+    /// of its QML), and no pass has drawn it yet.
+    pub(super) heard: bool,
+    /// A pass was drawn ahead of the display's frame since the last one
+    /// drawn at it.
+    pub(super) ahead: bool,
+    /// The pass about to run is drawn ahead of the display's frame.
+    pub(super) drawing_ahead: bool,
     /// When the earliest repaint the next pass answers was due, for the
     /// inspector.
     #[cfg(feature = "mcp")]
@@ -172,6 +180,9 @@ impl Slot {
             held: None,
             paced: None,
             beat: None,
+            heard: false,
+            ahead: false,
+            drawing_ahead: false,
             #[cfg(feature = "mcp")]
             asked: None,
         }
@@ -227,6 +238,8 @@ impl Slot {
         self.held = None;
         self.paced = None;
         self.beat = None;
+        self.heard = false;
+        self.ahead = false;
     }
 
     /// What the window showed may be gone, whichever painter drew it: the
@@ -288,6 +301,57 @@ impl Slot {
         self.held = None;
     }
 
+    /// The user did something the window shows: a key, a click, a turn
+    /// of the wheel, a save of its QML. Its pass is not paced, and is
+    /// drawn ahead of the display's frame where the window waits for one
+    /// ([`draws_ahead`](Self::draws_ahead)).
+    pub(super) fn heard_act(&mut self) {
+        self.heard_input();
+        self.heard = true;
+    }
+
+    /// Whether the pass for what the user did is drawn now rather than at
+    /// the display's next frame. A window that animates always waits for
+    /// one: its last frame asked for the next, and the platform lets it
+    /// draw only once the display has taken that frame, so a key pressed
+    /// between two frames was shown at the one after the next, a frame
+    /// late (#833). Drawn now, the display shows it at its next frame,
+    /// with the animation's step at that time; the animation's own frame
+    /// follows when the platform lets the window draw, on its beat. Once
+    /// a frame: a second key in the same frame waits for it. Only for the
+    /// processor's painter, whose picture is handed over without waiting:
+    /// a GL swap waits for the display's frame itself (`gl.rs`), and would
+    /// hold the loop there.
+    pub(super) fn draws_ahead(&self) -> bool {
+        self.waits_with_an_act()
+            && !self.out_of_sight()
+            && matches!(self.painter, Some(Painter::Cpu(_)))
+            && self.surface.as_ref().is_some_and(|s| s.shown)
+    }
+
+    /// What the user did waits for the display's frame, and none was
+    /// drawn ahead of it since the last.
+    pub(super) fn waits_with_an_act(&self) -> bool {
+        self.heard && !self.ahead && !self.redraw_granted
+    }
+
+    /// A pass ahead of the display's frame ([`draws_ahead`]) ran, and
+    /// `drew` a picture or found nothing changed. The display's rhythm
+    /// stays as the last frame drawn at it set it, so that the
+    /// animation's next frame is on time: `beat`, and the hold until it.
+    /// One that drew nothing leaves the next act its turn ahead.
+    ///
+    /// [`draws_ahead`]: Self::draws_ahead
+    pub(super) fn drawn_ahead(&mut self, now: Instant, drew: bool) {
+        if drew {
+            self.undrawn = 0;
+            self.ahead = true;
+        }
+        self.heard = false;
+        self.held = self.beat.filter(|beat| *beat > now);
+        self.paced = self.held;
+    }
+
     /// A pass that began at `began` was drawn. The display holds a drawn
     /// frame until it is shown, which paces the passes, except where
     /// presenting returns at once: a software rasteriser on an X server
@@ -305,6 +369,8 @@ impl Slot {
     pub(super) fn drawn(&mut self, began: Instant, now: Instant) {
         self.undrawn = 0;
         self.redraw_granted = false;
+        self.heard = false;
+        self.ahead = false;
         let interval = self.frame_hold();
         let from = match self.beat {
             Some(beat) if began >= beat && began < beat + interval / 2 => beat,
