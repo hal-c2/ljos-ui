@@ -1620,6 +1620,44 @@ if [ "$(uname -s)" = Linux ]; then
   if [ "$out" = unset ]; then ok "NVIDIA's driver is kept when its kernel driver is loaded"; else bad "with the kernel driver loaded, VK_LOADER_DRIVERS_DISABLE is $out"; fi
 fi
 
+# --- bench:history names what a session's load measured ----------------------------
+
+# A session waits between its steps, so the gaps between its changed frames
+# are those waits, not frame times: the table must not call them load frames.
+hist="$real/bench-history"
+mkdir -p "$hist/bin/0123456789abcdef" "$hist/report/apps" "$hist/report/inbox"
+printf '0123456789abcdef 2026-11-01T00:00:00+00:00 an earlier commit\n' >"$hist/bin/0123456789abcdef/commit"
+python3 - "$hist/report" <<'PY'
+import json, os, sys
+def run(app, runtime, gesture, p95, worst, steps=()):
+    return {"app": app, "runtime": runtime, "outcome": "ok", "gesture": gesture,
+            "load": {"cpu_percent": 10, "frames": {"p95_ms": p95, "max_ms": worst}}, "steps": list(steps)}
+rows = {"name": "2000 rows down", "p95_ms": 16.4, "long": 0}
+for name, runs in (("apps", [run("feed", rt, "scroll", 16.7, 33) for rt in ("at-012345678", "ljos")]),
+                   ("inbox", [run("inbox", rt, "session", 80, 9800, [rows]) for rt in ("at-012345678", "ljos")])):
+    json.dump({"runs": runs}, open(os.path.join(sys.argv[1], name, "report.json"), "w"))
+PY
+if ! out="$( (dir="$hist" && . "$ljos_root/scripts/bench-history.sh" && history_table) 2>&1)"; then
+  bad "bench:history table failed on a report of a scrolled app and a session" "$out"
+else
+  table="$(cat "$hist/history.md")"
+  inbox="$(sed -n '/^## inbox$/,/^## /p' <<<"$table")"
+  feed="$(sed -n '/^## feed$/,/^## /p' <<<"$table")"
+  if grep -q 'load frames' <<<"$inbox"; then
+    bad "bench:history calls a session's gaps between changes load frames" "$inbox"
+  elif ! grep -q '^| gaps between changes p95, ms | 80<br>' <<<"$inbox" ||
+    ! grep -q '^| gaps between changes max, ms | 9800<br>' <<<"$inbox"; then
+    bad "bench:history does not report a session's gaps between changes under their own name" "$inbox"
+  else
+    ok "bench:history reports a session's gaps between changes under their own name"
+  fi
+  if grep -q '^| load frames p95, ms | 16.7<br>' <<<"$feed" && ! grep -q 'gaps between changes' <<<"$feed"; then
+    ok "bench:history still reports a scrolled app's load frames"
+  else
+    bad "bench:history lost a scrolled app's load frames" "$feed"
+  fi
+fi
+
 # --- The checkout is as it was ---------------------------------------------------
 
 if [ -s "$guard/refused" ]; then

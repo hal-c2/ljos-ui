@@ -295,6 +295,15 @@ def step(name, key):
                 return s.get(key)
     return get
 
+# A session waits for its next step between changed frames, so under it the
+# load's frame intervals are those waits, not frame times; its frame times
+# are its steps' own (the "2000 rows" rows).
+def frames(key, session):
+    def get(r):
+        if (r.get("gesture") == "session") == session:
+            return ((r.get("load") or {}).get("frames") or {}).get(key)
+    return get
+
 metrics = [
     ("first frame, ms", lambda r: r.get("first_frame_ms")),
     ("first answering frame, ms", lambda r: r.get("input_ready_ms")),
@@ -304,8 +313,10 @@ metrics = [
     ("idle CPU, %", lambda r: (r.get("idle") or {}).get("cpu_percent")),
     ("idle wakeups/s", lambda r: (r.get("idle") or {}).get("wakeups_per_s")),
     ("load CPU, %", lambda r: (r.get("load") or {}).get("cpu_percent")),
-    ("load frames p95, ms", lambda r: ((r.get("load") or {}).get("frames") or {}).get("p95_ms")),
-    ("load frames max, ms", lambda r: ((r.get("load") or {}).get("frames") or {}).get("max_ms")),
+    ("load frames p95, ms", frames("p95_ms", session=False)),
+    ("load frames max, ms", frames("max_ms", session=False)),
+    ("gaps between changes p95, ms", frames("p95_ms", session=True)),
+    ("gaps between changes max, ms", frames("max_ms", session=True)),
     ("select lag, ms", step("select row 0", "lag_ms")),
     ("2000 rows p95, ms", step("2000 rows down", "p95_ms")),
     ("2000 rows long frames", step("2000 rows down", "long")),
