@@ -2242,12 +2242,21 @@ impl<M: Send + 'static> Desktop<M> {
         #[cfg(feature = "mcp")]
         self.record_rest(next);
         if let Some(drags) = self.drags.borrow_mut().as_mut() {
-            let soon = next.is_some_and(|t| t <= Instant::now() + DRAGS_LEFT_TO_THE_LOOP)
-                || self
-                    .slots
-                    .iter()
-                    .any(|s| s.redraw_asked.is_some() && !s.stalled);
-            drags.loop_wakes_soon(soon);
+            let left = Instant::now() + DRAGS_LEFT_TO_THE_LOOP;
+            let soon = next.is_some_and(|t| t <= left);
+            let framed = self
+                .slots
+                .iter()
+                .any(|s| s.redraw_asked.is_some() && !s.stalled);
+            if framed && !soon {
+                // A frame the display may withhold is no wake of the
+                // loop's own: the loop wakes by then anyway, so a drag
+                // is heard as soon as the thread would hear it. A frame
+                // that comes first sets this wake again, and it never
+                // fires while the display keeps its pace.
+                next = Some(left);
+            }
+            drags.loop_wakes_soon(soon || framed);
         }
         host.wake_at(next);
     }
