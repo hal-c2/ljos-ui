@@ -636,6 +636,12 @@ impl<M: Send + 'static> ShellApp<M> {
         &self.view
     }
 
+    /// A build without a watcher hears no saves.
+    #[cfg(not(feature = "dev"))]
+    pub(crate) fn take_edited(&self) -> bool {
+        false
+    }
+
     pub fn view_mut(&mut self) -> &mut QmlView {
         &mut self.view
     }

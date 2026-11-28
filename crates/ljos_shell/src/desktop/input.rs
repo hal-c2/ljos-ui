@@ -20,6 +20,23 @@ pub(super) fn starts_input(event: &WindowEvent) -> bool {
     }
 }
 
+/// What the user does that the window shows at once: a key, text, a
+/// press or a release, a turn of the wheel, a touch. Not the pointer
+/// moving, which over an animation would draw each frame twice.
+pub(super) fn shows_an_act(event: &WindowEvent) -> bool {
+    match event {
+        WindowEvent::Text(_) | WindowEvent::Touch(_) => true,
+        WindowEvent::Key(key) => key.state == ButtonState::Pressed,
+        WindowEvent::Pointer(pointer) => {
+            matches!(
+                pointer.kind,
+                PointerKind::Wheel(_) | PointerKind::Button(..)
+            )
+        }
+        _ => false,
+    }
+}
+
 /// Whether a press asks for a paste, by the chords of Qt's
 /// `QKeySequence::Paste` that egui-winit knows too: Command+V (Control+V
 /// off macOS), with Shift or without, Shift+Insert, and the Paste key. The
