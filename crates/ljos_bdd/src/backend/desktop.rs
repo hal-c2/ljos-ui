@@ -201,7 +201,11 @@ fn thread_wakes(pid: u32) -> Result<BTreeMap<u32, (String, u64)>> {
         };
         let name = field("Name:").unwrap_or("?").to_owned();
         let n = |key| field(key).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
-        let woke = n("voluntary_ctxt_switches:") + n("nonvoluntary_ctxt_switches:");
+        // A wake is the thread going to sleep and being woken: a thread
+        // the scheduler made give way was awake already, and how often
+        // it is depends on the machine's load, not on the application
+        // (the wakeups `ljos bench` and the inspector count too).
+        let woke = n("voluntary_ctxt_switches:");
         threads.insert(tid, (name, woke));
     }
     Ok(threads)
