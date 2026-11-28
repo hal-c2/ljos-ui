@@ -3012,11 +3012,11 @@ mod tests {
         slot.refresh = Some(50.0);
         slot.drawn(t, t);
         slot.heard_act();
-        slot.drawn_ahead(t + ms(3), false, None);
+        slot.drawn_ahead(t + ms(3), false, Some(ms(40)));
         assert_eq!(
             slot.held,
             Some(t + ms(20)),
-            "the frame still waits for the beat"
+            "a wish after the beat waits for the beat"
         );
         assert!(!slot.waits_with_an_act());
         slot.heard_act();
@@ -3024,7 +3024,8 @@ mod tests {
     }
 
     // The scene asked for a pass before the beat: an ahead pass that drew
-    // nothing does not hold it until the beat.
+    // nothing does not hold it until the beat, and one asked for at once
+    // runs at once, the next undrawn one a frame on.
     #[test]
     fn an_act_that_draws_nothing_ahead_keeps_the_scenes_sooner_wish() {
         let t = Instant::now();
@@ -3035,13 +3036,19 @@ mod tests {
         slot.heard_act();
         slot.drawn_ahead(t + ms(3), false, Some(ms(5)));
         assert_eq!(slot.held, Some(t + ms(8)), "the scene's wish is kept");
-        assert_eq!(slot.paced, Some(t + ms(20)), "the beat is kept");
+
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t);
         slot.heard_act();
-        slot.drawn_ahead(t + ms(4), false, Some(ms(40)));
+        slot.drawn_ahead(t + ms(3), false, Some(Duration::ZERO));
+        assert_eq!(slot.held, None, "a pass asked for at once is not held");
+        slot.heard_act();
+        slot.drawn_ahead(t + ms(4), false, Some(Duration::ZERO));
         assert_eq!(
             slot.held,
             Some(t + ms(20)),
-            "a later wish waits for the beat"
+            "a second undrawn pass is paced, and no later than the beat"
         );
     }
 

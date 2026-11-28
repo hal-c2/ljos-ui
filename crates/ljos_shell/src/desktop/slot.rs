@@ -340,25 +340,29 @@ impl Slot {
     /// stays as the last frame drawn at it set it, so that the
     /// animation's next frame is on time: `beat`, and the hold until it.
     /// One that drew nothing leaves the next act its turn ahead, and
-    /// holds no pass the scene asked for in `wake` past its time: the
-    /// hold is the beat or the scene's wish, whichever comes first.
+    /// waits for the scene's wish in `wake` as [`not_drawn`] would, but
+    /// never past the beat: a pass the scene asks for at once runs at
+    /// once, and repeated passes that draw nothing are still paced.
     ///
     /// [`draws_ahead`]: Self::draws_ahead
+    /// [`not_drawn`]: Self::not_drawn
     pub(super) fn drawn_ahead(&mut self, now: Instant, drew: bool, wake: Option<Duration>) {
         let beat = self.beat.filter(|beat| *beat > now);
+        self.heard = false;
         if drew {
             self.undrawn = 0;
             self.ahead = true;
             self.held = beat;
-        } else {
-            let wish = wake.filter(|w| *w > Duration::ZERO).map(|w| now + w);
-            self.held = match (beat, wish) {
-                (Some(beat), Some(wish)) => Some(beat.min(wish)),
-                (beat, wish) => beat.or(wish),
-            };
+            self.paced = beat;
+            return;
         }
-        self.heard = false;
-        self.paced = beat;
+        self.not_drawn(now, wake);
+        let by_the_beat = |t: Option<Instant>| match (t, beat) {
+            (Some(t), Some(beat)) => Some(t.min(beat)),
+            (t, _) => t,
+        };
+        self.held = by_the_beat(self.held);
+        self.paced = by_the_beat(self.paced);
     }
 
     /// A pass that began at `began` was drawn. The display holds a drawn
