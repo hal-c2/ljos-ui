@@ -70,6 +70,9 @@ impl Default for RasterConfig {
 pub struct VelloCpuReference {
     config: RasterConfig,
     ctx: Option<RenderContext>,
+    /// What draws an area too small to share out, on the calling thread
+    /// alone, when `ctx` has workers.
+    alone: Option<RenderContext>,
     resources: Resources,
     outlines: OutlineCache,
     /// Colour glyphs (emoji) as pictures, by size.
@@ -85,6 +88,14 @@ pub struct VelloCpuReference {
     /// The 3D views' pictures, read back from `ljos_3d`.
     views3d: crate::scene3d::Pictures,
 }
+
+/// The most pixels a picture or area has to be drawn on the calling
+/// thread alone, with workers to hand. Sharing a part out wakes every
+/// worker several times (a broadcast to start, one to finish, a barrier
+/// to reset), and an animation that changes a few pixels a frame paid
+/// some twenty wakes a frame for it (#834); a part this small draws in
+/// well under a millisecond on one thread.
+pub const ALONE_PIXELS: u32 = 256 * 256;
 
 /// Device pixels kept around an item's bounds when an area is culled:
 /// antialiasing and a snapped baseline reach a little past them.
@@ -167,6 +178,7 @@ impl VelloCpuReference {
         Self {
             config,
             ctx: None,
+            alone: None,
             resources: Resources::new(),
             outlines: OutlineCache::default(),
             colors: ColorGlyphCache::default(),
@@ -194,7 +206,14 @@ impl VelloCpuReference {
             },
         };
         self.ctx = None;
+        self.alone = None;
         self
+    }
+
+    /// Whether a picture or area `width` by `height` pixels is shared out
+    /// among the workers, rather than drawn on the calling thread alone.
+    pub fn shares_out(&self, width: u16, height: u16) -> bool {
+        self.settings.num_threads > 0 && u32::from(width) * u32::from(height) > ALONE_PIXELS
     }
 
     /// The colour the picture is cleared to from the next render on.
@@ -275,12 +294,23 @@ impl VelloCpuReference {
     /// top left corner, at the target's size.
     fn raster(&mut self, view: &FrameView<'_>, origin: Vec2, cull: bool, target: &mut Pixmap) {
         let (w16, h16) = (target.width(), target.height());
-        let mut ctx = match self.ctx.take() {
+        // With no workers the one context draws everything alone already.
+        let alone = self.settings.num_threads > 0 && !self.shares_out(w16, h16);
+        let (slot, settings) = if !alone {
+            (&mut self.ctx, self.settings)
+        } else {
+            let alone = RenderSettings {
+                num_threads: 0,
+                ..self.settings
+            };
+            (&mut self.alone, alone)
+        };
+        let mut ctx = match slot.take() {
             Some(mut c) => {
                 c.reset_and_resize(w16, h16);
                 c
             }
-            None => RenderContext::new_with(w16, h16, self.settings),
+            None => RenderContext::new_with(w16, h16, settings),
         };
         self.draw(&mut ctx, view, origin, cull);
         ctx.flush();
@@ -292,7 +322,11 @@ impl VelloCpuReference {
                 ..Default::default()
             },
         );
-        self.ctx = Some(ctx);
+        if alone {
+            self.alone = Some(ctx);
+        } else {
+            self.ctx = Some(ctx);
+        }
     }
 
     fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>, origin: Vec2, cull: bool) {
@@ -876,6 +910,7 @@ impl RenderBackend for VelloCpuReference {
 
     fn trim(&mut self, _pressure: MemoryPressure) {
         self.ctx = None;
+        self.alone = None;
         self.views3d.clear();
         self.resources = Resources::new();
         self.outlines.clear();
