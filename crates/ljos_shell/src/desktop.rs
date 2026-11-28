@@ -1650,7 +1650,7 @@ impl<M: Send + 'static> Desktop<M> {
         }
         if let Shown::Nothing { .. } = shown {
             if ahead {
-                slot.drawn_ahead(now, false);
+                slot.drawn_ahead(now, false, wake);
             } else {
                 slot.not_drawn(now, wake);
             }
@@ -1669,7 +1669,7 @@ impl<M: Send + 'static> Desktop<M> {
         show_when_drawn(host, surface, &mut slot.activate, screens_stale);
         slot.swapped = swapped;
         if ahead {
-            slot.drawn_ahead(Instant::now(), true);
+            slot.drawn_ahead(Instant::now(), true, None);
         } else {
             slot.drawn(began, Instant::now());
         }
@@ -2987,7 +2987,7 @@ mod tests {
         slot.heard_act();
         assert_eq!(slot.held, None, "what the user did is not paced");
         assert!(slot.waits_with_an_act());
-        slot.drawn_ahead(t + ms(6), true);
+        slot.drawn_ahead(t + ms(6), true, None);
         assert_eq!(slot.beat, Some(t + ms(20)), "the animation keeps its beat");
         assert_eq!(slot.held, Some(t + ms(20)), "and its frame waits for it");
         // A second key in the same frame waits for the frame.
@@ -3012,7 +3012,7 @@ mod tests {
         slot.refresh = Some(50.0);
         slot.drawn(t, t);
         slot.heard_act();
-        slot.drawn_ahead(t + ms(3), false);
+        slot.drawn_ahead(t + ms(3), false, None);
         assert_eq!(
             slot.held,
             Some(t + ms(20)),
@@ -3021,6 +3021,28 @@ mod tests {
         assert!(!slot.waits_with_an_act());
         slot.heard_act();
         assert!(slot.waits_with_an_act());
+    }
+
+    // The scene asked for a pass before the beat: an ahead pass that drew
+    // nothing does not hold it until the beat.
+    #[test]
+    fn an_act_that_draws_nothing_ahead_keeps_the_scenes_sooner_wish() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t);
+        slot.heard_act();
+        slot.drawn_ahead(t + ms(3), false, Some(ms(5)));
+        assert_eq!(slot.held, Some(t + ms(8)), "the scene's wish is kept");
+        assert_eq!(slot.paced, Some(t + ms(20)), "the beat is kept");
+        slot.heard_act();
+        slot.drawn_ahead(t + ms(4), false, Some(ms(40)));
+        assert_eq!(
+            slot.held,
+            Some(t + ms(20)),
+            "a later wish waits for the beat"
+        );
     }
 
     // The platform let the window draw: the frame is drawn at once anyway.
