@@ -204,7 +204,8 @@ fn thread_wakes(pid: u32) -> Result<BTreeMap<u32, (String, u64)>> {
         // A wake is the thread going to sleep and being woken: a thread
         // the scheduler made give way was awake already, and how often
         // it is depends on the machine's load, not on the application
-        // (the wakeups `ljos bench` and the inspector count too).
+        // (the wakeups the inspector counts too; `ljos bench` adds the
+        // preemptions to its count).
         let woke = n("voluntary_ctxt_switches:");
         threads.insert(tid, (name, woke));
     }
