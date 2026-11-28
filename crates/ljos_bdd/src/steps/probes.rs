@@ -123,6 +123,37 @@ fn window_woke_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
     w.each(|b| woke_at_most(b.probes()?.window_wakes_counted()?, most))
 }
 
+// Every thread of the application, the window's among them: what a
+// frame costs the machine in wakes, not only the window's thread.
+#[then(
+    regex = r"^the application's threads woke at most (\d+) times? in all since the wakes were counted$"
+)]
+fn all_threads_woke_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
+    if w.author().0.started() {
+        let main = w.author().0.main_wakes_counted()?;
+        let others = w.author().0.wakes_counted()?;
+        return all_woke_at_most(main, &others, most).map_err(|e| e.to_string());
+    }
+    w.each(|b| {
+        let probes = b.probes()?;
+        let main = probes.window_wakes_counted()?;
+        let others = probes.wakes_counted()?;
+        all_woke_at_most(main, &others, most)
+    })
+}
+
+fn all_woke_at_most(main: u64, others: &[(String, u64)], most: u64) -> Result<(), BackendError> {
+    let all = main + others.iter().map(|(_, n)| n).sum::<u64>();
+    if all <= most {
+        return Ok(());
+    }
+    let said: Vec<String> = others.iter().map(|(t, n)| format!("{t} {n}")).collect();
+    Err(BackendError::Failed(format!(
+        "the application's threads woke {all} times, not at most {most}: the window's {main}, {}",
+        said.join(", ")
+    )))
+}
+
 fn woke_at_most(woke: u64, most: u64) -> Result<(), BackendError> {
     if woke <= most {
         Ok(())
