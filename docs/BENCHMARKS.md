@@ -300,7 +300,9 @@ Only the desktop profile is measured. `BENCH_DEFAULTS` replaces `--warm-up --rep
 after `--` go to both runs. The reports are in `report/apps` and `report/inbox` under
 `BENCH_HISTORY_DIR` (by default the checkout's `bench-history` in the target). `table` writes the
 median of the repeats for each metric, its spread and the run count. A revision whose run did not
-end well shows its outcome instead.
+end well shows its outcome instead. A session waits for its next step between changed frames, so
+for the inbox the load's frame intervals are those waits: the table names them "gaps between
+changes", not load frames. Its frame times are the "2000 rows" rows.
 
 ## Noise
 
