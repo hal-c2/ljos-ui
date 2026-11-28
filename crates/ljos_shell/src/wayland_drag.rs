@@ -12,7 +12,10 @@
 //! thread waits on the connection too and dispatches the queue. It wakes
 //! for every event any window gets, so it does not while a pointer is
 //! over a window, where every click would wake it: winit hears the
-//! pointer then, and the loop is about to sleep after each event. Another
+//! pointer then, and the loop is about to sleep after each event. Nor
+//! does it while the loop wakes by itself soon (an animation, a timer):
+//! the loop dispatches the queue then, and the thread woke three times a
+//! frame of an animation for nothing (#834). Another
 //! thread reads what a drag carries when it comes in (a `DropArea`
 //! decides in `entered` from its `urls`, `text` and `formats`), as the
 //! source may be this application, which writes it from the loop. It
@@ -61,6 +64,13 @@ impl Drags {
     /// loop calls it each time before it sleeps.
     pub(crate) fn dispatch(&mut self) {
         self.0.dispatch();
+    }
+
+    /// Whether the loop, about to sleep, wakes again soon by itself: it
+    /// dispatches the queue then, and the thread need not wait on the
+    /// connection for it.
+    pub(crate) fn loop_wakes_soon(&mut self, soon: bool) {
+        self.0.set_looking(soon);
     }
 
     pub(crate) fn stop(self) {
@@ -248,6 +258,10 @@ mod imp {
             self.out.set_away(state.away());
         }
 
+        pub(crate) fn set_looking(&mut self, looking: bool) {
+            self.out.set_looking(looking);
+        }
+
         pub(crate) fn start_out(&mut self, data: &DragData, actions: DragActions) -> bool {
             if self.manager.version() < 3 {
                 return false;
@@ -332,10 +346,24 @@ mod imp {
     #[derive(Default)]
     struct Shared {
         out: Mutex<OutState>,
-        /// Set with the queue held, by whoever dispatched it last.
-        away: Mutex<bool>,
-        /// Told when `away` becomes true, or the shell stops.
+        watch: Mutex<Watch>,
+        /// Told when the dispatcher is to wait on the connection, or the
+        /// shell stops.
         wake: Condvar,
+    }
+
+    #[derive(Default, Clone, Copy)]
+    struct Watch {
+        /// Set with the queue held, by whoever dispatched it last.
+        away: bool,
+        /// The loop wakes by itself soon, and dispatches the queue then.
+        looking: bool,
+    }
+
+    impl Watch {
+        fn watched(self) -> bool {
+            self.away && !self.looking
+        }
     }
 
     impl Shared {
@@ -344,8 +372,22 @@ mod imp {
         }
 
         fn set_away(&self, away: bool) {
-            *lock(&self.away) = away;
-            if away {
+            self.set(|w| w.away = away);
+        }
+
+        fn set_looking(&self, looking: bool) {
+            self.set(|w| w.looking = looking);
+        }
+
+        fn looking(&self) -> bool {
+            lock(&self.watch).looking
+        }
+
+        fn set(&self, change: impl FnOnce(&mut Watch)) {
+            let mut watch = lock(&self.watch);
+            let was = watch.watched();
+            change(&mut watch);
+            if watch.watched() && !was {
                 self.wake.notify_all();
             }
         }
@@ -353,15 +395,18 @@ mod imp {
         /// Waits until the dispatcher is to wait on the connection; `false`
         /// when the shell stops instead.
         fn wait_away(&self, stopping: &AtomicBool) -> bool {
-            let mut away = lock(&self.away);
-            while !*away && !stopping.load(Ordering::Acquire) {
-                away = self.wake.wait(away).unwrap_or_else(PoisonError::into_inner);
+            let mut watch = lock(&self.watch);
+            while !watch.watched() && !stopping.load(Ordering::Acquire) {
+                watch = self
+                    .wake
+                    .wait(watch)
+                    .unwrap_or_else(PoisonError::into_inner);
             }
             !stopping.load(Ordering::Acquire)
         }
 
         fn stop(&self, stopping: &AtomicBool) {
-            let _away = lock(&self.away);
+            let _watch = lock(&self.watch);
             stopping.store(true, Ordering::Release);
             self.wake.notify_all();
         }
@@ -613,7 +658,9 @@ mod imp {
                     while out.wait_away(&stopping) {
                         let mut events = lock(&events);
                         let Events { queue, state } = &mut *events;
-                        while state.away() && !stopping.load(Ordering::Acquire) {
+                        // It returns at the queue's next event, a frame
+                        // at most when the loop has begun to look.
+                        while state.away() && !out.looking() && !stopping.load(Ordering::Acquire) {
                             // An error is a gone compositor, which winit
                             // hears of too.
                             if queue.blocking_dispatch(state).is_err() {
@@ -1062,6 +1109,10 @@ mod imp {
 
     impl Thread {
         pub(crate) fn dispatch(&mut self) {
+            match *self {}
+        }
+
+        pub(crate) fn set_looking(&mut self, _looking: bool) {
             match *self {}
         }
 

@@ -73,6 +73,12 @@ const RESIZE_WAIT: Duration = Duration::from_secs(1);
 /// and says nothing when it is not.
 const STALL: Duration = Duration::from_millis(250);
 
+/// How soon the loop is to wake by itself for drags from other
+/// applications to be left to it, rather than to a thread that wakes for
+/// everything any window hears (`wayland_drag`): a drag that comes in
+/// meanwhile is heard that much later at most, about three frames.
+const DRAGS_LEFT_TO_THE_LOOP: Duration = Duration::from_millis(50);
+
 /// The shortest time between two passes that are not drawn, for the
 /// root's window: its passes run the engine's timers and deliver the
 /// messages, seen or not.
@@ -2208,6 +2214,14 @@ impl<M: Send + 'static> Desktop<M> {
         }
         #[cfg(feature = "mcp")]
         self.record_rest(next);
+        if let Some(drags) = self.drags.borrow_mut().as_mut() {
+            let soon = next.is_some_and(|t| t <= Instant::now() + DRAGS_LEFT_TO_THE_LOOP)
+                || self
+                    .slots
+                    .iter()
+                    .any(|s| s.redraw_asked.is_some() && !s.stalled);
+            drags.loop_wakes_soon(soon);
+        }
         host.wake_at(next);
     }
 
