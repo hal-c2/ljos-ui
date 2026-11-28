@@ -204,3 +204,16 @@ fn the_screens_settings_draw_the_same_parts() {
     let screen = VelloCpuReference::new(BG).for_screen(2);
     redraw_with(screen, &mut s, |s| s.tree.set_pos(a, 77.25, 31.5), 1.0);
 }
+
+// A few changed pixels drawn on helper threads cost their wakes, several
+// each, every frame an animation draws (#834): such a part is drawn on the
+// calling thread, and a whole window is still shared out.
+#[test]
+fn only_a_large_part_is_shared_out() {
+    let screen = VelloCpuReference::new(BG).for_screen(3);
+    assert!(!screen.shares_out(24, 24));
+    assert!(!screen.shares_out(256, 256));
+    assert_eq!(screen.shares_out(1024, 720), cfg!(feature = "threads"));
+    let reference = VelloCpuReference::new(BG);
+    assert!(!reference.shares_out(1024, 720));
+}
