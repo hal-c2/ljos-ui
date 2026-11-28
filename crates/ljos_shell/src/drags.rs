@@ -140,6 +140,15 @@ impl Drags {
         }
     }
 
+    /// Whether the loop, about to sleep, wakes again soon by itself (a
+    /// deadline, a frame the platform is to let a window draw), and
+    /// handles what was said of drags then.
+    pub(crate) fn loop_wakes_soon(&mut self, soon: bool) {
+        if let Self::Wayland(drags) = self {
+            drags.loop_wakes_soon(soon);
+        }
+    }
+
     pub(crate) fn stop(self) {
         match self {
             Self::Wayland(drags) => drags.stop(),
